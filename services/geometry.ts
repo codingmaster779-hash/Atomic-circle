@@ -2,10 +2,10 @@
 import { Point, CircleResult } from '../types';
 
 export const analyzeCircle = (points: Point[], nucleus: Point): CircleResult => {
-  if (points.length < 15) {
+  if (points.length < 10) {
     return { 
       score: 0, centerX: 0, centerY: 0, radius: 0, 
-      message: "Draw a bit more!", isTooSmall: true, notClosed: false, timestamp: Date.now()
+      message: "Draw a loop!", isTooSmall: true, notClosed: false, timestamp: Date.now()
     };
   }
 
@@ -23,7 +23,8 @@ export const analyzeCircle = (points: Point[], nucleus: Point): CircleResult => 
   });
   const avgRadius = distances.reduce((acc, d) => acc + d, 0) / distances.length;
 
-  if (avgRadius < 30) {
+  // Mobile-friendly size check: smaller circles are okay
+  if (avgRadius < 15) {
     return { 
       score: 0, centerX: userCenterX, centerY: userCenterY, radius: avgRadius, 
       message: "Too small!", isTooSmall: true, notClosed: false, timestamp: Date.now()
@@ -33,47 +34,54 @@ export const analyzeCircle = (points: Point[], nucleus: Point): CircleResult => 
   // 3. Precision (Deviation from a perfect circle)
   const totalDeviation = distances.reduce((acc, d) => acc + Math.abs(d - avgRadius), 0);
   const meanDeviation = totalDeviation / distances.length;
+  // Increase denominator for more forgiving scoring (0.45 instead of 0.35)
   const relativeDeviation = meanDeviation / avgRadius;
 
-  // 4. Closed loop check (Strict)
+  // 4. Closed loop check (Magnetic for mobile)
   const start = points[0];
   const end = points[points.length - 1];
   const gap = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2));
-  const isNotClosed = gap > avgRadius * 0.4; // Must be within 40% of the radius to count as closed
+  
+  // More lenient closure: allow up to 60% of radius gap on mobile
+  const isNotClosed = gap > avgRadius * 0.6; 
 
   if (isNotClosed) {
     return {
       score: 0, centerX: userCenterX, centerY: userCenterY, radius: avgRadius,
-      message: "Finish the loop!", isTooSmall: false, notClosed: true, timestamp: Date.now()
+      message: "Close the loop!", isTooSmall: false, notClosed: true, timestamp: Date.now()
     };
   }
 
   // 5. Nucleus Centering Bonus/Penalty
-  // Calculate how far the circle's center is from the actual nucleus
   const distFromNucleus = Math.sqrt(Math.pow(userCenterX - nucleus.x, 2) + Math.pow(userCenterY - nucleus.y, 2));
   const centeringError = distFromNucleus / avgRadius;
 
-  // 6. Final Score Calculation (Generous)
-  // Base score on precision
-  let score = 100 * (1 - (relativeDeviation / 0.35)); 
+  // 6. Final Score Calculation (Optimized for Fingers)
+  // We use a softer curve for relativeDeviation so wobbly lines don't kill the score.
+  let score = 100 * (1 - (relativeDeviation / 0.5)); 
   
-  // Penalize for poor centering relative to the nucleus
-  score -= (centeringError * 15);
+  // Centering penalty is lighter on mobile
+  score -= (centeringError * 10);
 
-  // Bonus for decent work to make it feel good
-  if (score > 50) score += 5;
+  // Small closure penalty for visible gaps, but don't fail them
+  if (gap > avgRadius * 0.2) {
+    score -= (gap / avgRadius) * 15;
+  }
+
+  // Bonus to make it feel satisfying
+  if (score > 40) score += 8;
 
   score = Math.max(0, Math.min(100, score));
 
-  let message = "Not bad!";
-  if (score > 98) message = "ABSOLUTE UNIT";
-  else if (score > 95) message = "Nuclear Precision!";
-  else if (score > 90) message = "Perfect Symmetry!";
-  else if (score > 85) message = "Great Form!";
-  else if (score > 75) message = "Solid Circle!";
-  else if (score > 60) message = "Good effort.";
-  else if (score > 40) message = "Wobbly orbit.";
-  else message = "Unstable form.";
+  let message = "Keep it up!";
+  if (score > 98) message = "ABSOLUTE PRECISION";
+  else if (score > 95) message = "Perfect Orbit!";
+  else if (score > 90) message = "Nuclear Symmetry!";
+  else if (score > 80) message = "Strong Form!";
+  else if (score > 65) message = "Good Loop!";
+  else if (score > 45) message = "Stable enough.";
+  else if (score > 20) message = "Unstable orbit.";
+  else message = "Fragmented.";
 
   return {
     score: Math.round(score),
