@@ -19,33 +19,35 @@ const App: React.FC = () => {
 
   // Persistence
   useEffect(() => {
-    const savedHistory = localStorage.getItem('atomic_history');
-    if (savedHistory) setHistory(JSON.parse(savedHistory));
-    
-    const savedTheme = localStorage.getItem('atomic_theme') as ThemeType;
-    if (savedTheme && THEMES[savedTheme]) setActiveTheme(savedTheme);
+    try {
+      const savedHistory = localStorage.getItem('atomic_history_v2');
+      if (savedHistory) setHistory(JSON.parse(savedHistory));
+      const savedTheme = localStorage.getItem('atomic_theme_v2') as ThemeType;
+      if (savedTheme && THEMES[savedTheme]) setActiveTheme(savedTheme);
+    } catch (e) { console.error("Storage error", e); }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('atomic_history', JSON.stringify(history));
+    localStorage.setItem('atomic_history_v2', JSON.stringify(history));
   }, [history]);
 
   useEffect(() => {
-    localStorage.setItem('atomic_theme', activeTheme);
+    localStorage.setItem('atomic_theme_v2', activeTheme);
   }, [activeTheme]);
 
-  // Score animation
+  // Score Animation
   useEffect(() => {
     if (appState === AppState.RATED && result && !result.notClosed) {
       let start = 0;
       const end = result.score;
-      const duration = 700;
+      const duration = 800;
       const startTime = performance.now();
 
       const animate = (currentTime: number) => {
         const elapsed = currentTime - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        setAnimatedScore(Math.floor(progress * end));
+        const easeProgress = 1 - Math.pow(1 - progress, 3); // Ease out cubic
+        setAnimatedScore(Math.floor(easeProgress * end));
         if (progress < 1) requestAnimationFrame(animate);
       };
       requestAnimationFrame(animate);
@@ -62,27 +64,28 @@ const App: React.FC = () => {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
+    // Nucleus Location
+    const nucleusX = canvas.width / 2;
+    const nucleusY = canvas.height / 2;
 
-    // Draw Nucleus (Center Dot)
+    // Draw Nucleus
     ctx.beginPath();
-    ctx.arc(centerX, centerY, 6, 0, Math.PI * 2);
+    ctx.arc(nucleusX, nucleusY, 8, 0, Math.PI * 2);
     ctx.fillStyle = theme.primary;
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 15;
     ctx.shadowColor = theme.primary;
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Drawing Path
+    // Draw User Line
     if (points.length > 0) {
       ctx.beginPath();
-      ctx.lineWidth = 8;
+      ctx.lineWidth = 10;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.strokeStyle = theme.primary;
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = theme.primary + '44';
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = theme.primary + '55';
       ctx.moveTo(points[0].x, points[0].y);
       for (let i = 1; i < points.length; i++) {
         ctx.lineTo(points[i].x, points[i].y);
@@ -91,12 +94,12 @@ const App: React.FC = () => {
       ctx.shadowBlur = 0;
     }
 
-    // Ghost Perfect Circle (Only if score > 0)
-    if (appState === AppState.RATED && result && result.score > 0 && !result.notClosed) {
+    // Draw Feedback Circle
+    if (appState === AppState.RATED && result && !result.notClosed && result.score > 0) {
       ctx.beginPath();
       ctx.setLineDash([15, 15]);
       ctx.lineWidth = 3;
-      ctx.strokeStyle = theme.secondary + '66';
+      ctx.strokeStyle = theme.secondary + '44';
       ctx.arc(result.centerX, result.centerY, result.radius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
@@ -110,7 +113,7 @@ const App: React.FC = () => {
   const handleStart = (x: number, y: number) => {
     if (appState === AppState.RATED) {
       setResult(null);
-      setAnimatedScore(0);
+      setAppState(AppState.IDLE);
     }
     isDrawingRef.current = true;
     setAppState(AppState.DRAWING);
@@ -126,14 +129,17 @@ const App: React.FC = () => {
     if (!isDrawingRef.current) return;
     isDrawingRef.current = false;
     
-    if (points.length > 8) {
-      const analysis = analyzeCircle(points);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const nucleus = { x: canvas.width / 2, y: canvas.height / 2 };
+
+    if (points.length > 5) {
+      const analysis = analyzeCircle(points, nucleus);
       setResult(analysis);
       setAppState(AppState.RATED);
       
-      // Only save to history if it's a valid, closed figure that isn't too small
       if (!analysis.isTooSmall && !analysis.notClosed && analysis.score > 0) {
-        setHistory(prev => [analysis, ...prev].slice(0, 50));
+        setHistory(prev => [analysis, ...prev].slice(0, 30));
       }
     } else {
       setAppState(AppState.IDLE);
@@ -161,51 +167,45 @@ const App: React.FC = () => {
     };
   };
 
-  const bestScore = useMemo(() => {
-    return history.length > 0 ? Math.max(...history.map(h => h.score)) : 0;
-  }, [history]);
+  const highPaceStats = useMemo(() => ({
+    best: history.length > 0 ? Math.max(...history.map(h => h.score)) : 0,
+    avg: history.length > 0 ? Math.round(history.reduce((a, b) => a + b.score, 0) / history.length) : 0
+  }), [history]);
 
   return (
     <div 
-      className="min-h-screen flex flex-col items-center justify-center p-4 transition-all duration-1000 select-none"
+      className="min-h-screen flex flex-col items-center justify-center p-4 transition-all duration-700 overflow-hidden"
       style={{ backgroundColor: theme.bg, color: theme.text }}
     >
       <div 
-        className="w-full max-w-2xl rounded-[4rem] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.25)] relative flex flex-col items-center p-6 md:p-12 space-y-8 overflow-hidden transition-all duration-700"
+        className="w-full max-w-xl rounded-[3.5rem] shadow-2xl relative flex flex-col items-center p-8 md:p-12 space-y-8 overflow-hidden transition-all duration-500"
         style={{ backgroundColor: theme.card }}
       >
-        {/* Decorative Background Elements */}
-        <div className="absolute top-0 right-0 w-64 h-64 opacity-[0.03] pointer-events-none" 
-             style={{ backgroundColor: theme.primary, borderRadius: '50%', transform: 'translate(30%, -30%)' }} />
-
-        {/* Header */}
-        <div className="w-full flex justify-between items-end relative z-10">
+        {/* Title & Best Score */}
+        <div className="w-full flex justify-between items-start z-10">
           <div className="flex flex-col">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full animate-pulse" style={{ backgroundColor: theme.primary }} />
-              <h1 className="text-4xl font-black tracking-tighter" style={{ color: theme.text }}>
-                Atomic.
-              </h1>
-            </div>
-            <div className="mt-1 flex gap-4">
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">NUCLEUS STABLE</span>
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">BEST: {bestScore}%</span>
+            <h1 className="text-4xl font-black tracking-tighter" style={{ color: theme.text }}>
+              Atomic<span style={{ color: theme.primary }}>.</span>
+            </h1>
+            <div className="flex gap-3 mt-1">
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Best: {highPaceStats.best}%</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest opacity-40">Avg: {highPaceStats.avg}%</span>
             </div>
           </div>
           <button 
             onClick={() => setIsSettingsOpen(true)}
-            className="group w-16 h-16 rounded-3xl flex items-center justify-center transition-all duration-500 hover:rotate-90 hover:scale-110 active:scale-90 shadow-lg"
+            className="w-14 h-14 rounded-2xl flex items-center justify-center transition-all hover:scale-110 active:scale-90"
             style={{ backgroundColor: theme.accent }}
           >
             <SettingsIcon color={theme.primary} />
           </button>
         </div>
 
-        {/* Canvas Area */}
-        <div className="relative w-full aspect-square rounded-[3.5rem] overflow-hidden group transition-all duration-700"
+        {/* Drawing Zone */}
+        <div className="relative w-full aspect-square rounded-[3rem] overflow-hidden transition-all duration-500"
              style={{ 
                backgroundColor: theme.bg, 
-               boxShadow: `inset 0 0 80px ${theme.accent}, 0 20px 40px -20px ${theme.primary}33` 
+               boxShadow: `inset 0 0 50px ${theme.accent}` 
              }}>
           <canvas
             ref={canvasRef}
@@ -222,83 +222,72 @@ const App: React.FC = () => {
           />
           
           {appState === AppState.IDLE && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-1000">
-                 <div className="w-16 h-16 border-2 border-dashed rounded-full animate-spin duration-[10s] opacity-20" style={{ borderColor: theme.text }} />
-                 <span className="opacity-20 font-black text-xs uppercase tracking-[0.5em]">Orbit The Core</span>
-              </div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-3">
+              <div className="w-20 h-20 border-2 border-dashed rounded-full animate-spin duration-[15s] opacity-10" style={{ borderColor: theme.text }} />
+              <span className="text-[10px] font-bold uppercase tracking-[0.4em] opacity-30">Orbit the Core</span>
             </div>
           )}
 
           {appState === AppState.RATED && result && (
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-10">
+            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-8">
               <div 
-                className="self-start px-8 py-6 rounded-[2.5rem] shadow-2xl backdrop-blur-2xl border-2 animate-in slide-in-from-left-12 duration-500"
-                style={{ backgroundColor: theme.card + 'bb', borderColor: theme.accent }}
+                className="self-start glass p-6 rounded-[2.5rem] shadow-xl border animate-in zoom-in duration-300"
+                style={{ backgroundColor: theme.card + '99', borderColor: theme.accent }}
               >
-                <div className="text-7xl font-black leading-none" style={{ color: theme.primary }}>
-                  {result.notClosed ? '?' : animatedScore}<span className="text-2xl ml-1 opacity-30">{result.notClosed ? '' : '%'}</span>
+                <div className="text-6xl font-black leading-none" style={{ color: theme.primary }}>
+                  {result.notClosed ? '?' : animatedScore}<span className="text-2xl ml-1 opacity-40">%</span>
                 </div>
-                <p className="text-[10px] font-black opacity-30 uppercase tracking-[0.3em] mt-3">Accuracy Index</p>
+                <div className="text-[10px] font-bold opacity-40 uppercase tracking-widest mt-2">Stability Index</div>
               </div>
 
               <div 
-                className="self-end px-6 py-3 rounded-2xl shadow-xl border backdrop-blur-md animate-in slide-in-from-right-12 duration-700"
-                style={{ backgroundColor: theme.card + 'bb', borderColor: theme.accent }}
+                className="self-end glass px-6 py-3 rounded-2xl shadow-lg border animate-in slide-in-from-right-8 duration-500"
+                style={{ backgroundColor: theme.card + '99', borderColor: theme.accent }}
               >
-                <p className="text-lg font-black italic uppercase tracking-tight" style={{ color: theme.text }}>{result.message}</p>
+                <p className="text-lg font-black uppercase tracking-tight italic" style={{ color: theme.text }}>{result.message}</p>
               </div>
             </div>
           )}
         </div>
 
-        <div className="text-center pb-2 opacity-30">
-            <p className="text-[9px] font-black uppercase tracking-[0.6em]">System Online • Ready to Rate</p>
+        <div className="text-center opacity-30 text-[9px] font-black uppercase tracking-[0.4em]">
+           Auto-rating active • Draw to restart
         </div>
 
-        {/* Settings Overlay */}
+        {/* Settings Panel */}
         {isSettingsOpen && (
-          <div className="absolute inset-0 z-50 flex flex-col p-10 animate-in slide-in-from-right duration-500 ease-out-expo" 
-               style={{ backgroundColor: theme.card }}>
-            
-            <div className="flex justify-between items-center mb-12">
-              <div className="flex flex-col">
-                <h2 className="text-5xl font-black tracking-tighter">The Vault</h2>
-                <div className="flex items-center gap-2 mt-1">
-                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.primary }} />
-                   <p className="text-[10px] font-black opacity-30 tracking-[0.3em] uppercase">Core Settings</p>
-                </div>
-              </div>
+          <div className="absolute inset-0 z-50 flex flex-col p-10 animate-in slide-in-from-right duration-500" style={{ backgroundColor: theme.card }}>
+            <div className="flex justify-between items-center mb-10">
+              <h2 className="text-4xl font-black tracking-tighter">The Vault</h2>
               <button 
                 onClick={() => setIsSettingsOpen(false)} 
-                className="w-16 h-16 rounded-[2rem] flex items-center justify-center transition-all hover:scale-110 active:scale-90 shadow-md"
+                className="w-14 h-14 rounded-full flex items-center justify-center shadow-md transition-transform active:scale-90"
                 style={{ backgroundColor: theme.accent }}
               >
                 <CloseIcon color={theme.primary} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-16 pr-4 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto space-y-12 pr-4 custom-scrollbar">
               
-              {/* Theme Selection */}
+              {/* Theme Selector */}
               <section>
-                <div className="flex justify-between items-center mb-8">
-                   <h3 className="text-sm font-black uppercase tracking-widest opacity-60">Visual Matrix</h3>
-                   <span className="text-[10px] opacity-30">{Object.keys(THEMES).length} Available</span>
+                <div className="flex items-center gap-3 mb-6">
+                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.primary }} />
+                   <h3 className="text-xs font-black uppercase tracking-widest opacity-50">Visual Skins</h3>
                 </div>
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-3 gap-5">
                   {(Object.keys(THEMES) as ThemeType[]).map((t) => (
                     <button
                       key={t}
                       onClick={() => setActiveTheme(t)}
-                      className={`group relative aspect-square rounded-[2rem] border-4 transition-all duration-500 ${activeTheme === t ? 'scale-110 shadow-2xl z-10' : 'opacity-40 hover:opacity-100 hover:scale-105'}`}
+                      className={`group relative aspect-square rounded-3xl border-4 transition-all ${activeTheme === t ? 'scale-110 shadow-2xl ring-4 ring-offset-2 ring-transparent' : 'opacity-40 hover:opacity-100 hover:scale-105'}`}
                       style={{ 
                         backgroundColor: THEMES[t].primary, 
                         borderColor: activeTheme === t ? THEMES[t].accent : 'transparent' 
                       }}
                     >
-                      <div className="absolute inset-2 rounded-[1.5rem] border border-white/10" />
-                      <span className="absolute bottom-3 left-0 right-0 text-[9px] font-black text-white uppercase text-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <span className="absolute bottom-2 left-0 right-0 text-[8px] font-black text-white uppercase opacity-0 group-hover:opacity-100 transition-opacity">
                         {t}
                       </span>
                     </button>
@@ -306,38 +295,33 @@ const App: React.FC = () => {
                 </div>
               </section>
 
-              {/* Attempt Log */}
-              <section className="pb-10">
-                <div className="flex justify-between items-center mb-8">
-                   <h3 className="text-sm font-black uppercase tracking-widest opacity-60">Memory Core</h3>
-                   <span className="text-[10px] opacity-30">{history.length} Saved</span>
+              {/* Stats & History */}
+              <section className="pb-8">
+                <div className="flex items-center gap-3 mb-6">
+                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.primary }} />
+                   <h3 className="text-xs font-black uppercase tracking-widest opacity-50">Log Book</h3>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {history.length === 0 ? (
-                    <div className="p-16 text-center rounded-[3rem] opacity-20 border-4 border-dashed" style={{ borderColor: theme.accent }}>
-                       <p className="text-sm font-black italic uppercase">No data found in nucleus.</p>
+                    <div className="p-16 text-center border-4 border-dashed rounded-[3rem] opacity-20" style={{ borderColor: theme.accent }}>
+                       <p className="text-sm italic font-bold">Empty nucleus...</p>
                     </div>
                   ) : (
                     history.map((h, i) => (
                       <div 
                         key={h.timestamp + i} 
-                        className="group p-6 rounded-[2.5rem] flex justify-between items-center transition-all hover:translate-x-2"
+                        className="p-5 rounded-[2rem] flex justify-between items-center transition-transform hover:-translate-y-1"
                         style={{ backgroundColor: theme.bg }}
                       >
-                        <div className="flex items-center gap-6">
-                          <div className="w-16 h-16 rounded-[1.5rem] flex flex-col items-center justify-center shadow-lg" 
-                               style={{ backgroundColor: theme.card }}>
-                            <span className="text-2xl font-black leading-none" style={{ color: theme.primary }}>{h.score}</span>
-                            <span className="text-[8px] font-black opacity-30 uppercase">PTS</span>
+                        <div className="flex items-center gap-5">
+                          <div className="w-14 h-14 rounded-2xl flex flex-col items-center justify-center font-black" style={{ backgroundColor: theme.card }}>
+                            <span className="text-xl" style={{ color: theme.primary }}>{h.score}</span>
+                            <span className="text-[7px] opacity-30 mt-[-2px]">%</span>
                           </div>
                           <div>
-                            <p className="text-[10px] font-black opacity-30 uppercase tracking-tighter">Transmission #{history.length - i}</p>
-                            <p className="text-lg font-black uppercase tracking-tight opacity-90">{h.message}</p>
+                             <p className="text-sm font-black uppercase tracking-tight opacity-90">{h.message}</p>
+                             <p className="text-[9px] opacity-30 font-bold">{new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                           </div>
-                        </div>
-                        <div className="text-right flex flex-col items-end gap-1">
-                          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: h.score > 90 ? '#22c55e' : h.score > 60 ? theme.primary : '#ef4444' }} />
-                          <p className="text-[9px] font-black opacity-20 uppercase tracking-widest">{new Date(h.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                       </div>
                     ))
@@ -347,10 +331,10 @@ const App: React.FC = () => {
             </div>
             
             <button 
-              onClick={() => { if(confirm('Erase Memory?')) { setHistory([]); localStorage.removeItem('atomic_history'); } }}
-              className="mt-8 w-full py-6 rounded-[2rem] text-[11px] font-black opacity-30 hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all uppercase tracking-[0.4em] border-2 border-transparent hover:border-red-100"
+              onClick={() => { if(confirm('Wipe progress?')) { setHistory([]); localStorage.removeItem('atomic_history_v2'); } }}
+              className="mt-6 w-full py-5 rounded-2xl text-[10px] font-black opacity-20 hover:opacity-100 hover:text-red-500 transition-all uppercase tracking-[0.4em]"
             >
-              Flush Memory Core
+              Clear Records
             </button>
           </div>
         )}
@@ -360,13 +344,13 @@ const App: React.FC = () => {
 };
 
 const SettingsIcon = ({ color }: { color: string }) => (
-  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
   </svg>
 );
 
 const CloseIcon = ({ color }: { color: string }) => (
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
     <path d="M18 6L6 18M6 6l12 12"/>
   </svg>
 );
